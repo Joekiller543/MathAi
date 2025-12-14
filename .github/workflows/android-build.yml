@@ -33,11 +33,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: '**/*.apk'      - name: List APK files
-        run: find . -name "*.apk"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
           path: '**/*.apk'
