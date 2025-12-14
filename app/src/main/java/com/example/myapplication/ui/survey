@@ -1,0 +1,440 @@
+Here are the refactored files. I have consolidated the logic from the redundant `ui.survey` package into the `ui.onboarding` package, ensuring it serves as the single source of truth for the onboarding flow, and updated `MainActivity` to reflect these changes.
+
+File: app/src/main/java/com/example/myapplication/ui/onboarding/OnboardingViewModel.kt
+```kotlin
+package com.example.myapplication.ui.onboarding
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.myapplication.data.local.PreferenceManager
+import com.example.myapplication.util.AppFileManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * UI State for the Onboarding/Survey screen.
+ */
+data class OnboardingUiState(
+    val hobby: String = "",
+    val grade: String = "",
+    val country: String = "",
+    val likes: String = "",
+    val dislikes: String = "",
+    val isComplete: Boolean = false,
+    val isLoading: Boolean = false,
+    val folderCreated: Boolean = false,
+    val errorMessage: String? = null
+)
+
+/**
+ * ViewModel for managing the User Onboarding logic.
+ *
+ * This replaces the legacy SurveyViewModel. It handles:
+ * 1. Form state management.
+ * 2. Storage permission handling and directory creation.
+ * 3. Persisting user demographics to PreferenceManager.
+ */
+class OnboardingViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val preferenceManager = PreferenceManager(application)
+    
+    private val _uiState = MutableStateFlow(OnboardingUiState())
+    val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
+
+    init {
+        checkStartupStatus()
+    }
+
+    /**
+     * Checks if the user has already completed onboarding.
+     */
+    private fun checkStartupStatus() {
+        val isDone = preferenceManager.isSetupDone()
+        if (isDone) {
+            val userData = preferenceManager.getUserData()
+            _uiState.value = _uiState.value.copy(
+                isComplete = true,
+                hobby = userData.hobby,
+                grade = userData.grade,
+                country = userData.country,
+                likes = userData.likes,
+                dislikes = userData.dislikes
+            )
+        }
+    }
+
+    // region Input Handlers
+
+    fun onHobbyChange(newValue: String) {
+        _uiState.value = _uiState.value.copy(hobby = newValue)
+    }
+
+    fun onGradeChange(newValue: String) {
+        _uiState.value = _uiState.value.copy(grade = newValue)
+    }
+
+    fun onCountryChange(newValue: String) {
+        _uiState.value = _uiState.value.copy(country = newValue)
+    }
+
+    fun onLikesChange(newValue: String) {
+        _uiState.value = _uiState.value.copy(likes = newValue)
+    }
+
+    fun onDislikesChange(newValue: String) {
+        _uiState.value = _uiState.value.copy(dislikes = newValue)
+    }
+
+    // endregion
+
+    // region Storage & Permissions
+
+    /**
+     * Called when Storage Permission is granted.
+     * Attempts to create the app's working directory.
+     */
+    fun onPermissionGranted() {
+        viewModelScope.launch {
+            val created = AppFileManager.createAppFolder(getApplication())
+            _uiState.value = _uiState.value.copy(folderCreated = created)
+        }
+    }
+
+    /**
+     * Called when Storage Permission is denied.
+     * Attempts fallback creation of app-specific storage.
+     */
+    fun onPermissionDenied() {
+        viewModelScope.launch {
+            val created = AppFileManager.createAppFolder(getApplication())
+            _uiState.value = _uiState.value.copy(folderCreated = created)
+        }
+    }
+
+    // endregion
+
+    // region Submission
+
+    /**
+     * Validates input and persists the user profile.
+     */
+    fun completeOnboarding() {
+        val currentState = _uiState.value
+        
+        if (isValidInput(currentState)) {
+            _uiState.value = currentState.copy(isLoading = true)
+            
+            // Persist data using PreferenceManager
+            preferenceManager.saveUserData(
+                hobby = currentState.hobby,
+                grade = currentState.grade,
+                country = currentState.country,
+                likes = currentState.likes,
+                dislikes = currentState.dislikes
+            )
+
+            // Update state to trigger navigation in Main Activity
+            _uiState.value = currentState.copy(
+                isLoading = false,
+                isComplete = true
+            )
+        } else {
+            _uiState.value = currentState.copy(errorMessage = "Please fill in all required fields.")
+        }
+    }
+
+    private fun isValidInput(state: OnboardingUiState): Boolean {
+        // Basic validation: Ensure required fields are not empty
+        return state.hobby.isNotBlank() && 
+               state.grade.isNotBlank() && 
+               state.country.isNotBlank()
+    }
+
+    // endregion
+}
+```
+
+File: app/src/main/java/com/example/myapplication/ui/onboarding/OnboardingScreen.kt
+```kotlin
+package com.example.myapplication.ui.onboarding
+
+import android.Manifest
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+
+@Composable
+fun OnboardingScreen(
+    viewModel: OnboardingViewModel
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val scrollState = rememberScrollState()
+
+    // Permission Launcher for Storage handling
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            viewModel.onPermissionGranted()
+        } else {
+            Toast.makeText(context, "Using app-specific storage (Permission denied)", Toast.LENGTH_SHORT).show()
+            viewModel.onPermissionDenied()
+        }
+    }
+
+    // Trigger permission request on first load if necessary for legacy Android versions
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            viewModel.onPermissionGranted()
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.imePadding()
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(scrollState)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Top
+        ) {
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Text(
+                text = "Profile Setup",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            
+            Text(
+                text = "Tell us about yourself to personalize your experience.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, bottom = 32.dp)
+            )
+
+            // Form Fields
+            OnboardingTextField(
+                value = uiState.hobby,
+                onValueChange = viewModel::onHobbyChange,
+                label = "Your Hobby *"
+            )
+
+            OnboardingTextField(
+                value = uiState.grade,
+                onValueChange = viewModel::onGradeChange,
+                label = "Grade / Level *"
+            )
+
+            OnboardingTextField(
+                value = uiState.country,
+                onValueChange = viewModel::onCountryChange,
+                label = "Country *"
+            )
+            
+            OnboardingTextField(
+                value = uiState.likes,
+                onValueChange = viewModel::onLikesChange,
+                label = "Likes (e.g. Coding, Math)",
+                singleLine = false
+            )
+
+            OnboardingTextField(
+                value = uiState.dislikes,
+                onValueChange = viewModel::onDislikesChange,
+                label = "Dislikes (e.g. History, Bugs)",
+                singleLine = false,
+                imeAction = ImeAction.Done
+            )
+
+            if (uiState.errorMessage != null) {
+                Text(
+                    text = uiState.errorMessage!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (uiState.isLoading) {
+                CircularProgressIndicator()
+            } else {
+                Button(
+                    onClick = { viewModel.completeOnboarding() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    enabled = uiState.hobby.isNotBlank() && uiState.grade.isNotBlank() && uiState.country.isNotBlank()
+                ) {
+                    Text("Complete Setup")
+                }
+            }
+
+            if (uiState.folderCreated) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "✓ Storage Environment Ready",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun OnboardingTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    singleLine: Boolean = true,
+    imeAction: ImeAction = ImeAction.Next
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        singleLine = singleLine,
+        maxLines = if (singleLine) 1 else 3,
+        keyboardOptions = KeyboardOptions.Default.copy(imeAction = imeAction)
+    )
+}
+```
+
+File: app/src/main/java/com/example/myapplication/MainActivity.kt
+```kotlin
+package com.example.myapplication
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myapplication.data.api.RetrofitClient
+import com.example.myapplication.data.local.PreferenceManager
+import com.example.myapplication.data.repository.CerebrasRepository
+import com.example.myapplication.data.repository.MathRepository
+import com.example.myapplication.ui.learning.LearningScreen
+import com.example.myapplication.ui.learning.LearningViewModel
+import com.example.myapplication.ui.onboarding.OnboardingScreen
+import com.example.myapplication.ui.onboarding.OnboardingViewModel
+import com.example.myapplication.ui.theme.MyApplicationTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Manual Dependency Injection Setup
+        val preferenceManager = PreferenceManager(applicationContext)
+        val cerebrasRepository = CerebrasRepository(RetrofitClient.apiService)
+        val mathRepository = MathRepository(cerebrasRepository, preferenceManager)
+
+        // ViewModel Factory handles passing dependencies to ViewModels
+        val appViewModelFactory = AppViewModelFactory(application, mathRepository, preferenceManager)
+
+        setContent {
+            MyApplicationTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    AppNavigation(appViewModelFactory)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Root composable handling the high-level navigation state.
+ * Switches between Onboarding and Main App (Learning) based on setup status.
+ */
+@Composable
+fun AppNavigation(viewModelFactory: ViewModelProvider.Factory) {
+    // We utilize OnboardingViewModel to check the global 'isComplete' state
+    val onboardingViewModel: OnboardingViewModel = viewModel(factory = viewModelFactory)
+    val onboardingState by onboardingViewModel.uiState.collectAsState()
+
+    if (onboardingState.isComplete) {
+        // Setup is done, transition to the Learning Screen
+        // We obtain a fresh LearningViewModel scoped to this composable
+        val learningViewModel: LearningViewModel = viewModel(factory = viewModelFactory)
+        LearningScreen(viewModel = learningViewModel)
+    } else {
+        // Show Onboarding Screen
+        OnboardingScreen(viewModel = onboardingViewModel)
+    }
+}
+
+/**
+ * Custom Factory to inject dependencies into ViewModels.
+ */
+class AppViewModelFactory(
+    private val application: android.app.Application,
+    private val mathRepository: MathRepository,
+    private val preferenceManager: PreferenceManager
+) : ViewModelProvider.Factory {
+
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(OnboardingViewModel::class.java)) {
+            return OnboardingViewModel(application) as T
+        }
+        if (modelClass.isAssignableFrom(LearningViewModel::class.java)) {
+            return LearningViewModel(mathRepository, preferenceManager) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+```

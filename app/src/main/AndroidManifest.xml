@@ -1,0 +1,47 @@
+File: app/src/main/AndroidManifest.xml
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.myapplication">
+
+    <!-- Permission required for Retrofit API calls (Cerebras AI) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- 
+        Permission required for Legacy File Storage operations (AppFileManager fallback).
+        Max SDK set to 29 (Android 10) as Android 11+ uses Scoped Storage by default.
+    -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
+        android:maxSdkVersion="29" 
+        tools:ignore="ScopedStorage" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication"
+        tools:targetApi="31">
+        
+        <!-- 
+            MainActivity serves as the entry point and host for Navigation.
+            Explicitly defined with fully qualified class name to ensure strict package resolution.
+        -->
+        <activity
+            android:name="com.example.myapplication.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
+```
